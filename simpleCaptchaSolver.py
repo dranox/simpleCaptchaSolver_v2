@@ -8,7 +8,6 @@ import numpy as np
 from imutils import paths
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.model_selection import train_test_split
-from keras.models import Sequential
 from keras.layers.convolutional import Conv2D, MaxPooling2D
 from keras.layers.core import Flatten, Dense
 from keras.models import load_model
@@ -25,8 +24,7 @@ def GenerateCharacterrs():
         image = cv2.imread(captcha_image_file)  # beolvassa a képet, majd atalakitja grayscale-re
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         gray = cv2.copyMakeBorder(gray, 8, 8, 8, 8, cv2.BORDER_REPLICATE)
-        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[
-            1]  # egy treshold hogy konnyebb legyen a karakterek megtalalasa
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1] #threshold, azert hogy megtalalhassa a karaktereket mint contour
         contours = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # contour-ok megkeresése
         contours = contours[1] if imutils.is_cv3() else contours[0]
         letter_image_regions = []  # karakterek helyei, ehhez addodnak hozza a karakterek regioi
@@ -49,28 +47,13 @@ def GenerateCharacterrs():
     print("Karakterek kigyujtese vegetert")
 
 
-### ha nem lenne megfelelo a kepek(karakterek) merete akkor ez a function atmeretezi ###
-def resize_to_fit(image, width, height):
-    (h, w) = image.shape[:2]
-    if w > h:
-        image = imutils.resize(image, width=width)
-    else:
-        image = imutils.resize(image, height=height)
-    padW = int((width - image.shape[1]) / 2.0)
-    padH = int((height - image.shape[0]) / 2.0)
-    image = cv2.copyMakeBorder(image, padH, padH, padW, padW,
-                               cv2.BORDER_REPLICATE)
-    image = cv2.resize(image, (width, height))
-    return image
-
-
 ### a kiszedett karaktereket tolti be es dolgozza fel ###
 def LoadData():
     print("Kigyujtott adatok feldolgozasa")
     for image_file in paths.list_images("generated_contours"):  # Betolti a kiszedett karakterkepeket
         image = cv2.imread(image_file)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  # Atvaltja gray-re
-        image = resize_to_fit(image, 20, 20)  # Ha nem megfelelo a meret akkor a fenti segedfuggvennyel korrigalja
+        image = cv2.resize(image, (20, 20))  # Ha nem megfelelo a meret akkor a fenti segedfuggvennyel korrigalja
         image = np.expand_dims(image,
                                axis=2)  # Megnoveli a dim-ek szamat, ez csak azert kellett hogy passzoljon a network-be
         label = image_file.split(os.path.sep)[-2]  # kiszedi a file nevet, hogy label-t csinalhasson belole
@@ -105,24 +88,24 @@ def BuildAndTrainNetwork():
     model.add(Dense(32, activation="softmax"))
     model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy", "mse"])
     model.fit(X_train, Y_train, validation_data=(X_test, Y_test), batch_size=50, epochs=2,
-              verbose=1)  # traineles, 2 epochs van, mivel mar a 2. epochnal eleri a 97%-os accuracy-t, utana pedig nem valtozott jelentosen
+              verbose=1)  # traineles, 2 epochs van, mivel mar a 2. epochnal eler egy adott accuracy-t, utana pedig nem valtozott jelentosen
     model.save("captcha_model.hdf5")  # lementi egy file-ba a modelt, kesobb konnyebb legyen hasznalni
     print("Neural network trainelese kesz")
 
 
 ### Egy teszt ami random kivalaszt 10 kepet es azokon teszteli a network-t ###
-def RunTest():
+def RunTest(testsize):
     print("Teszt kezdete")
+    counter=0
     f = open("one_hot_labels.dat", "rb")
     lb = pickle.load(f)
     network = load_model("captcha_model.hdf5")
     captcha_image_files = list(paths.list_images("captcha_images"))
-    captcha_image_files = np.random.choice(captcha_image_files, size=(10,), replace=False)  # random kepek kivalasztasa
+    captcha_image_files = np.random.choice(captcha_image_files, size=(testsize,), replace=False)  # random kepek kivalasztasa
 
     for image_file in captcha_image_files:  # hasonloan a fenti GenerateCharacters function-hoz kigyujti a karaktereket a kepekbol
         image = cv2.imread(image_file)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        image = cv2.copyMakeBorder(image, 20, 20, 20, 20, cv2.BORDER_REPLICATE)
         thresh = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
         contours = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = contours[1] if imutils.is_cv2() else contours[0]
@@ -135,24 +118,33 @@ def RunTest():
         predictions = []  # a predictionoket tarolja majd ebbe
         for letter_bounding_box in letter_image_regions:
             x, y, w, h = letter_bounding_box
-            letter_image = image[y - 2:y + h + 2, x - 2:x + w + 2]
-            letter_image = resize_to_fit(letter_image, 20, 20)  # meret korigalasa
-            letter_image = np.expand_dims(letter_image, axis=2)  # dimenziok kiigazitasa
-            letter_image = np.expand_dims(letter_image, axis=0)
-            prediction = network.predict(letter_image)
-            letter = lb.inverse_transform(prediction)[0]
-            predictions.append(letter)  # karakter prediction
+            try:
+                letter_image = image[y - 2:y + h + 2, x - 2:x + w + 2]
+                letter_image = cv2.resize(letter_image, (20, 20))  # meret korigalasa
+                letter_image = np.expand_dims(letter_image, axis=2)  # dimenziok kiigazitasa
+                letter_image = np.expand_dims(letter_image, axis=0)
+                prediction = network.predict(letter_image)      #predikcio
+                letter = lb.inverse_transform(prediction)[0]
+                predictions.append(letter)  # karakter prediction
+            except cv2.error as e:
+                print("Hiba a karakter keppel")
         captcha_text = "".join(predictions)
         print("Valaszott kep: {}".format(image_file))
         print("Predikcio: {}".format(captcha_text))
+
+        base=os.path.basename(image_file)
+        print("Correct: {}".format(captcha_text == os.path.splitext(base)[0]))
+        if captcha_text==os.path.splitext(base)[0]:
+            counter+=1
     print("Teszt vege")
+    print("Eredmenyek: "+str(counter)+"/"+str(testsize)+" -> "+str(counter/testsize*100)+"%")
 
 
 #########ures keras model, kesobb ez lesz bovitve:
-model = Sequential()
+#model = Sequential()
 
 #########karakterek kigyujtese:
-GenerateCharacterrs()
+#GenerateCharacterrs()
 
 #########karakterek betoltese/feldolgozasa:
 data = []
@@ -166,7 +158,7 @@ labels = np.array(labels)
 (Y_train, Y_test) = MakeOneHot(Y_train, Y_test)
 
 #########Network train:
-BuildAndTrainNetwork()
+#BuildAndTrainNetwork()
 
 #########Teszt:
-RunTest()
+RunTest(100)
